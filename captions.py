@@ -55,17 +55,41 @@ def notes_from_pptx(path):
         return out
 
 
+_TXT_SLIDE = re.compile(r"^\s*##\s*(.*)$", re.M)
+
+
+def _txt_slides(path):
+    """A .txt script split at its "## Slide title" lines -> [(title, notes)]; none if it has no such lines."""
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
+        text = f.read()
+    heads = list(_TXT_SLIDE.finditer(text))
+    if not heads:
+        return [], text
+    return [(h.group(1).strip(), text[h.end(): heads[i + 1].start() if i + 1 < len(heads) else len(text)].strip())
+            for i, h in enumerate(heads)], text
+
+
+def slide_notes(path):
+    """Each slide's notes, from a .pptx, or a .txt with a "## Slide title" line before each slide's notes."""
+    path = str(path)
+    if path.lower().endswith(".pptx"):
+        return notes_from_pptx(path)
+    return [n for _, n in _txt_slides(path)[0]]
+
+
 def read_notes(path):
     """The whole script as one text, from a .pptx (its speaker notes) or a .txt file."""
     path = str(path)
     if path.lower().endswith(".pptx"):
         return "\n\n".join(n for n in notes_from_pptx(path) if n)
-    with open(path, encoding="utf-8-sig", errors="replace") as f:
-        return f.read()
+    slides, text = _txt_slides(path)
+    return "\n\n".join(n for _, n in slides if n) if slides else text
 
 
 def slide_titles(path):
     """Each slide's header: its title placeholder, else its biggest text (skipping bare numbers like "01")."""
+    if not str(path).lower().endswith(".pptx"):
+        return [t for t, _ in _txt_slides(str(path))[0]]
     try:
         from pptx import Presentation
     except ImportError:
