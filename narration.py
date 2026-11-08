@@ -77,11 +77,52 @@ def caption_text(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
-def plan(notes, lex=None):
+def recorded_pattern(words):
+    """A regex finding the words the lecturer recorded (capitalised ones match exactly, lowercase ones in any case)."""
+    exact = sorted((w for w in words if w != w.lower()), key=len, reverse=True)
+    loose = sorted((w for w in words if w == w.lower()), key=len, reverse=True)
+    alts = [re.escape(w) for w in exact] + ["(?i:" + re.escape(w) + ")" for w in loose]
+    return re.compile(r"(?<![\w-])(" + "|".join(alts) + r")(?![\w-])") if alts else None
+
+
+def segments(sentence, lex, rec=None, recorded=None):
+    """
+    A sentence as what the voice says, with the recorded words taken out:
+      [("tts", spoken_text) | ("clip", word) | ("gap", seconds)]
+    """
+    if not rec:
+        return [("tts", _say(sentence, lex))]
+    plain = sentence.replace("*", "")
+    segs, at = [], 0
+    for m in rec.finditer(plain):
+        segs += _text_seg(plain[at:m.start()], lex)
+        word = m.group(1)
+        key = word if word in recorded else word.lower()
+        segs.append(("clip", key if key in recorded else next(k for k in recorded if k.lower() == word.lower())))
+        at = m.end()
+    segs += _text_seg(plain[at:], lex)
+    return segs
+
+
+def _text_seg(text, lex):
+    """Words between recorded ones; a comma next to a recorded word becomes a short gap."""
+    if not re.search(r"\w", text):
+        return [("gap", 0.18)] if re.search(r"[,;:]", text) else []
+    segs = [("tts", _say(text, lex))]
+    if re.match(r"\s*[,;:]", text):
+        segs.insert(0, ("gap", 0.18))
+    if re.search(r"[,;:]\s*$", text):
+        segs.append(("gap", 0.18))
+    return segs
+
+
+def plan(notes, lex=None, recorded=None):
     """
     One slide's notes -> what to do, in order:
-      ("say", spoken_text, caption_text, energy)  or  ("pause", seconds)
+      ("say", [segments], caption_text, energy)  or  ("pause", seconds)
+    recorded: the words the lecturer recorded in their own voice (played instead of the AI voice).
     """
+    rec = recorded_pattern(recorded or ())
     steps = []
     paragraphs = [p for p in re.split(r"\n\s*\n", notes or "") if p.strip()]
     for pi, para in enumerate(paragraphs):
@@ -97,7 +138,7 @@ def plan(notes, lex=None):
                 if not re.search(r"\w", sent):
                     continue
                 energy = STRESS_ENERGY if "*" in sent else 0.5
-                steps.append(("say", _say(sent, lex), caption_text(sent), energy))
+                steps.append(("say", segments(sent, lex, rec, recorded), caption_text(sent), energy))
                 steps.append(("pause", SENTENCE_PAUSE))
     # pauses merge; none at the very end (the slide timing adds its own)
     merged = []

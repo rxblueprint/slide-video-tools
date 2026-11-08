@@ -67,24 +67,88 @@ def write_wav(path, samples, sr):
         w.writeframes(pcm)
 
 
-def speak(pptx, voice_wav, lexicon_text, first, last, outdir, say=None):
+def read_wav(path):
+    import numpy as np
+    with wave.open(str(path), "rb") as w:
+        data = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float32) / 32768
+        return data, w.getframerate()
+
+
+def trim(audio, sr, margin=0.04, floor=0.02):
+    """Cut the silence at both ends, keeping a short margin."""
+    import numpy as np
+    loud = np.flatnonzero(np.abs(audio) > floor * max(1e-6, float(np.abs(audio).max())) * 3)
+    if not len(loud):
+        return audio
+    m = int(sr * margin)
+    return audio[max(0, loud[0] - m): loud[-1] + m]
+
+
+def rms(audio):
+    import numpy as np
+    return float(np.sqrt(np.mean(audio ** 2))) if len(audio) else 0.0
+
+
+def fade(audio, sr, d=0.012):
+    n = min(int(sr * d), len(audio) // 2)
+    if n:
+        import numpy as np
+        ramp = np.linspace(0, 1, n, dtype=np.float32)
+        audio = audio.copy()
+        audio[:n] *= ramp
+        audio[-n:] *= ramp[::-1]
+    return audio
+
+
+def speak(pptx, voice_wav, lexicon_text, first, last, outdir, say=None, recorded=None):
+    """recorded: {word: wav path at SR} of words in the lecturer's own voice, played instead of the AI voice."""
     import numpy as np
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     notes = captions.notes_from_pptx(str(pptx))
     lex = narration.read_lexicon(lexicon_text)
+    clips = {w: trim(*read_wav(p)) for w, p in (recorded or {}).items()}
     say = say or chatterbox(voice_wav)
+    level = 0.08  # running loudness of the AI voice, so recorded words can match it
     for n in range(first, min(last, len(notes)) + 1):
         parts, cues, t, sr = [], [], 0.0, SR
-        for step in narration.plan(notes[n - 1], lex):
+        for step in narration.plan(notes[n - 1], lex, clips.keys()):
             if step[0] == "pause":
                 parts.append(np.zeros(int(sr * step[1]), dtype=np.float32))
                 t += step[1]
+                continue
+            segs = step[1]
+            if len(segs) == 1 and segs[0][0] == "tts":
+                audio, sr = say(segs[0][1], step[3])
+                audio = audio.astype(np.float32)
+                level = 0.8 * level + 0.2 * rms(trim(audio, sr))
             else:
-                audio, sr = say(step[1], step[3])
-                parts.append(audio.astype(np.float32))
-                cues.append([round(t, 3), round(t + len(audio) / sr, 3), step[2]])
-                t += len(audio) / sr
+                # the AI voice says the words between the recorded ones; the joins are trimmed and faded
+                pieces = []
+                for kind, val in segs:
+                    if kind == "tts":
+                        a, sr = say(val, step[3])
+                        a = trim(a.astype(np.float32), sr)
+                        level = 0.8 * level + 0.2 * rms(a)
+                        pieces.append(("v", a))
+                    elif kind == "clip":
+                        pieces.append(("c", clips[val]))
+                    else:
+                        pieces.append(("g", np.zeros(int(sr * val), dtype=np.float32)))
+                out = []
+                for kind, a in pieces:
+                    if kind == "c":
+                        a = a * min(4.0, level / max(rms(a), 1e-4))
+                    if kind != "g":
+                        a = fade(a, sr)
+                        if out and out[-1] is not None:
+                            out.append(np.zeros(int(sr * 0.06), dtype=np.float32))
+                    out.append(a)
+                audio = np.concatenate([a for a in out if a is not None]) if out else np.zeros(1, dtype=np.float32)
+                audio = np.clip(audio, -1, 1)
+            parts.append(audio)
+            cues.append([round(t, 3), round(t + len(audio) / sr, 3), step[2]])
+            t += len(audio) / sr
         audio = np.concatenate(parts) if parts else np.zeros(int(sr * 1.5), dtype=np.float32)
         write_wav(outdir / f"slide-{n:03d}.wav", audio, sr)
         (outdir / f"slide-{n:03d}.json").write_text(json.dumps({"slide": n, "seconds": round(len(audio) / sr, 3), "cues": cues}))

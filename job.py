@@ -70,6 +70,28 @@ def plan(lid):
     print(json.dumps({"groups": groups, "slides": len(words)}))
 
 
+def my_words(lid, pptx, work):
+    """The words the lecturer recorded that this deck's notes use, as 24 kHz mono WAVs."""
+    import captions
+    import narration
+    words = {w["word"]: w["url"] for w in site("gen-words", id=lid).get("words", [])}
+    rec = narration.recorded_pattern(words)
+    if not rec:
+        return {}
+    used = {m.group(1) for n in captions.notes_from_pptx(str(pptx)) for m in rec.finditer(n.replace("*", ""))}
+    folder = work / "words"
+    folder.mkdir()
+    out = {}
+    for i, w in enumerate(sorted(k for k in words if k in used or any(u.lower() == k for u in used))):
+        raw = fetch(words[w], folder / f"{i}.in")
+        wav = folder / f"{i}.wav"
+        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(raw), "-ac", "1", "-ar", "24000",
+                        "-af", "highpass=f=70", str(wav)], check=True)
+        out[w] = wav
+    print(f"{len(out)} of your recorded words are in this deck", flush=True)
+    return out
+
+
 def speak(lid, first, last):
     import narrate
     job = site("gen-start", id=lid, peek=True)
@@ -82,8 +104,9 @@ def speak(lid, first, last):
     lexicon = (HERE / "pronunciations.txt").read_text(encoding="utf-8")
     if job.get("lexicon_url"):
         lexicon += "\n" + fetch(job["lexicon_url"], work / "lex.txt").read_text(encoding="utf-8")
+    recorded = my_words(lid, pptx, work)
     out = work / "audio"
-    narrate.speak(pptx, wav, lexicon, first, last, out)
+    narrate.speak(pptx, wav, lexicon, first, last, out, recorded=recorded)
     urls = site("gen-audio", id=lid, first=first, last=last, mode="put")["urls"]
     for u in urls:
         f = out / u["name"]
