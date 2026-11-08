@@ -69,21 +69,31 @@ def _txt_slides(path):
             for i, h in enumerate(heads)], text
 
 
+_DIRECTION = re.compile(r"\s*\[(?!pause\b)[^\]]*\]", re.I)   # stage directions such as [Click]
+
+
+def _clean(text):
+    """Notes as spoken: no stage directions, pause marks or stress stars."""
+    text = _DIRECTION.sub(" ", text)
+    text = re.sub(r"\[pause[^\]]*\]", " ", text, flags=re.I)
+    return re.sub(r"(?<![\w*])\*([^*\s][^*]*?)\*(?![\w*])", r"\1", text)
+
+
 def slide_notes(path):
     """Each slide's notes, from a .pptx, or a .txt with a "## Slide title" line before each slide's notes."""
     path = str(path)
     if path.lower().endswith(".pptx"):
-        return notes_from_pptx(path)
-    return [n for _, n in _txt_slides(path)[0]]
+        return [_clean(n) for n in notes_from_pptx(path)]
+    return [_clean(n) for _, n in _txt_slides(path)[0]]
 
 
 def read_notes(path):
     """The whole script as one text, from a .pptx (its speaker notes) or a .txt file."""
     path = str(path)
     if path.lower().endswith(".pptx"):
-        return "\n\n".join(n for n in notes_from_pptx(path) if n)
+        return "\n\n".join(_clean(n) for n in notes_from_pptx(path) if n)
     slides, text = _txt_slides(path)
-    return "\n\n".join(n for _, n in slides if n) if slides else text
+    return _clean("\n\n".join(n for _, n in slides if n) if slides else text)
 
 
 def slide_titles(path):

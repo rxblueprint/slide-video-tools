@@ -727,3 +727,4 @@ RisperiDONE = risperidone
 ZIPrasidone = ziprasidone
 ZAPs = zaps
 1HP = one aitch pee
+HLA-B*5701 = aitch el ay bee fifty seven oh one

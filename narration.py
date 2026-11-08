@@ -20,6 +20,8 @@ DEFAULT_PAUSE = 0.80
 STRESS_ENERGY = 0.65     # Chatterbox "exaggeration" for a sentence with a stressed word (normal 0.5)
 
 _PAUSE = re.compile(r"\[pause(?:\s+(\d+(?:\.\d+)?))?\]", re.I)
+_DIRECTION = re.compile(r"\[(?!pause\b)[^\]]*\]", re.I)   # stage directions such as [Click]: neither said nor captioned
+_STRESS = re.compile(r"(?<![\w*])\*([^*\s][^*]*?)\*(?![\w*])")  # *word*, but not the star in HLA-B*5701
 
 
 LETTERS = dict(zip("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "ay bee see dee ee eff jee aitch eye jay kay el em en oh pee cue ar ess tee you vee W ex why zed".split()))
@@ -65,7 +67,7 @@ def _say(text, lex):
                 pattern = re.compile(r"(?<![\w-])(" + "|".join(re.escape(w) for w in group) + r")(?![\w-])", flags)
                 text = pattern.sub(lambda m: sub(m).replace("-", ""), text)
     text = _ABBR.sub(lambda m: spell(m.group(1), m.group(2)), text)
-    text = re.sub(r"\s*\*([^*]+)\*", r", \1", text)   # a comma before a stressed word gives it a small run-up
+    text = re.sub(r"\s*" + _STRESS.pattern, r", \1", text)   # a comma before a stressed word gives it a small run-up
     text = re.sub(r",(\s*,)+", ",", text)
     return re.sub(r"\s+", " ", text).strip(" ,")
 
@@ -73,7 +75,7 @@ def _say(text, lex):
 def caption_text(text):
     """The words as students read them: no pause or stress marks."""
     text = _PAUSE.sub(" ", text)
-    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    text = _STRESS.sub(r"\1", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -124,7 +126,7 @@ def plan(notes, lex=None, recorded=None):
     """
     rec = recorded_pattern(recorded or ())
     steps = []
-    paragraphs = [p for p in re.split(r"\n\s*\n", notes or "") if p.strip()]
+    paragraphs = [p for p in re.split(r"\n\s*\n", _DIRECTION.sub(" ", notes or "")) if p.strip()]
     for pi, para in enumerate(paragraphs):
         if pi:
             steps.append(("pause", PARAGRAPH_PAUSE))
@@ -137,7 +139,7 @@ def plan(notes, lex=None, recorded=None):
             for sent in re.split(r"(?<=[.!?])\s+", piece.strip()):
                 if not re.search(r"\w", sent):
                     continue
-                energy = STRESS_ENERGY if "*" in sent else 0.5
+                energy = STRESS_ENERGY if _STRESS.search(sent) else 0.5
                 steps.append(("say", segments(sent, lex, rec, recorded), caption_text(sent), energy))
                 steps.append(("pause", SENTENCE_PAUSE))
     # pauses merge; none at the very end (the slide timing adds its own)
