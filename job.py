@@ -95,7 +95,8 @@ def assemble(lid):
     pptx, pdf = deck(job, work)
     audio = work / "audio"
     audio.mkdir()
-    n = int(job["slides"])
+    import captions
+    n = len(captions.notes_from_pptx(str(pptx)))
     for u in site("gen-audio", id=lid, first=1, last=n, mode="get")["urls"]:
         fetch(u["url"], audio / u["name"])
     out = work / "lecture.mp4"
