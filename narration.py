@@ -22,25 +22,51 @@ STRESS_ENERGY = 0.65     # Chatterbox "exaggeration" for a sentence with a stres
 _PAUSE = re.compile(r"\[pause(?:\s+(\d+(?:\.\d+)?))?\]", re.I)
 
 
+LETTERS = dict(zip("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "ay bee see dee ee eff jee aitch eye jay kay el em en oh pee cue ar ess tee you vee W ex why zed".split()))
+LETTERS["W"] = "double you"
+ROMAN = {"II": "two", "III": "three"}
+_ABBR = re.compile(r"(?<![\w])([A-Z]{2,})(s?)(?![\w])")
+
+
 def read_lexicon(text):
-    """'ceftriaxone = seff-try-AXE-own' lines -> {lowercase word: spoken form}."""
+    """'ceftriaxone = seff try axe own' lines -> {word: spoken form}. Entries with capitals match only that exact case
+    (so "US = you ess" leaves "us" alone); lowercase entries match any case."""
     lex = {}
     for line in (text or "").splitlines():
         line = line.split("#", 1)[0].strip()
         if "=" in line:
             word, said = (x.strip() for x in line.split("=", 1))
             if word and said:
-                lex[word.lower()] = said
+                lex[word if word != word.lower() else word.lower()] = said
     return lex
 
 
+def spell(abbr, plural=""):
+    """HIV -> 'aitch eye vee'; STIs -> 'ess tee eyes'."""
+    if abbr in ROMAN:
+        return ROMAN[abbr]
+    names = [LETTERS[c] for c in abbr]
+    if plural:
+        names[-1] += "es" if names[-1].endswith(("s", "x", "ch")) else "s"
+    return " ".join(names)
+
+
 def _say(text, lex):
-    """The text as the voice should read it: pronunciations swapped in, stress marks removed."""
+    """The text as the voice should read it: pronunciations swapped in, other capital abbreviations spelled out
+    letter by letter, stress marks removed. Hyphens inside a swapped-in word are dropped (they make the voice pause)."""
     if lex:
         words = sorted(lex, key=len, reverse=True)
-        pattern = re.compile(r"(?<![\w-])(" + "|".join(re.escape(w) for w in words) + r")(?![\w-])", re.I)
-        text = pattern.sub(lambda m: lex[m.group(1).lower()], text)
+        exact = [w for w in words if w != w.lower()]
+        loose = [w for w in words if w == w.lower()]
+        def sub(m):
+            return lex.get(m.group(1)) or lex[m.group(1).lower()]
+        for group, flags in ((exact, 0), (loose, re.I)):
+            if group:
+                pattern = re.compile(r"(?<![\w-])(" + "|".join(re.escape(w) for w in group) + r")(?![\w-])", flags)
+                text = pattern.sub(lambda m: sub(m).replace("-", ""), text)
+    text = _ABBR.sub(lambda m: spell(m.group(1), m.group(2)), text)
     text = re.sub(r"\s*\*([^*]+)\*", r", \1", text)   # a comma before a stressed word gives it a small run-up
+    text = re.sub(r",(\s*,)+", ",", text)
     return re.sub(r"\s+", " ", text).strip(" ,")
 
 

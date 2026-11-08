@@ -78,7 +78,10 @@ def speak(lid, first, last):
     voice = fetch(job["voice_url"], work / "voice-in")
     wav = work / "voice.wav"
     subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(voice), "-ac", "1", "-ar", "24000", str(wav)], check=True)
-    lexicon = fetch(job["lexicon_url"], work / "lex.txt").read_text(encoding="utf-8") if job.get("lexicon_url") else ""
+    # the built-in list of abbreviations from the decks, then the site's own list (which wins where both have a word)
+    lexicon = (HERE / "pronunciations.txt").read_text(encoding="utf-8")
+    if job.get("lexicon_url"):
+        lexicon += "\n" + fetch(job["lexicon_url"], work / "lex.txt").read_text(encoding="utf-8")
     out = work / "audio"
     narrate.speak(pptx, wav, lexicon, first, last, out)
     urls = site("gen-audio", id=lid, first=first, last=last, mode="put")["urls"]
