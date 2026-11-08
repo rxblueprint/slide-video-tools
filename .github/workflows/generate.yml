@@ -1,0 +1,82 @@
+# Slides + speaker notes + a voice clip -> a narrated lecture video with captions and topics.
+# Started by the site (workflow_dispatch). Every file comes in and goes out through short-lived links
+# from the site; nothing is stored in this repository or its artifacts.
+name: Generate lecture
+
+on:
+  workflow_dispatch:
+    inputs:
+      lecture_id:
+        description: Lecture id
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: generate-${{ inputs.lecture_id }}
+  cancel-in-progress: true
+
+env:
+  SITE_URL: ${{ vars.SITE_URL || 'https://rxblueprint.ca' }}
+  POLISH_SECRET: ${{ secrets.POLISH_SECRET }}
+  LECTURE_ID: ${{ inputs.lecture_id }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      groups: ${{ steps.plan.outputs.groups }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install --quiet python-pptx
+      - id: plan
+        run: |
+          python job.py plan "$LECTURE_ID" > plan.json
+          echo "groups=$(python -c "import json;print(json.dumps(json.load(open('plan.json'))['groups']))")" >> "$GITHUB_OUTPUT"
+          cat plan.json
+
+  speak:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    strategy:
+      fail-fast: true
+      max-parallel: 20
+      matrix:
+        group: ${{ fromJSON(needs.plan.outputs.groups) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-voice.txt
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-chatterbox-0.1.7
+      - run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+          pip install --quiet torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet -r requirements-voice.txt
+      - run: python job.py speak "$LECTURE_ID" ${{ matrix.group[0] }} ${{ matrix.group[1] }}
+
+  assemble:
+    needs: speak
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg poppler-utils fonts-crosextra-carlito fonts-dejavu-core libreoffice-impress
+          pip install --quiet python-pptx pillow numpy
+      - run: python job.py assemble "$LECTURE_ID"
