@@ -1,0 +1,40 @@
+# Polishes a lecture after it's uploaded in Admin → Lectures: shortens long pauses, crossfades slide
+# changes, adds the intro and end cards, and evens out the voice (lecture-polish/).
+# Started by the site (workflow_dispatch) when GITHUB_POLISH_REPO points here; the job reports back with
+# POLISH_SECRET. Files come in and go out through short-lived links from the site; nothing is stored here.
+# This repo is public, so these runs don't use the account's Actions minutes.
+name: Polish lecture
+
+on:
+  workflow_dispatch:
+    inputs:
+      lecture_id:
+        description: Lecture id
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: polish-${{ inputs.lecture_id }}
+  cancel-in-progress: true
+
+jobs:
+  polish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: lecture-polish
+      - name: Install ffmpeg and fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg fonts-crosextra-carlito fonts-dejavu-core
+          python3 -m pip install --quiet --break-system-packages pillow faster-whisper python-pptx
+      - name: Polish
+        env:
+          LECTURE_ID: ${{ inputs.lecture_id }}
+          POLISH_SECRET: ${{ secrets.POLISH_SECRET }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://rxblueprint.ca' }}
+        run: python3 lecture-polish/job.py "$LECTURE_ID"
