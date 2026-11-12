@@ -487,6 +487,18 @@ def sorry_cuts(words, sil):
     return [c for _, _, c in _sorry_takes(heard, [_k(w) for w, _, _ in heard], sil)]
 
 
+def imagined_sorry(cut, plain, after=40):
+    """True when a "sorry" cut found only by the listen primed for "sorry" would remove teaching: the plain
+    listen hears no "sorry" there, but three or more meaningful words that aren't said again just after.
+    ("I'm, I'm sorry" imagined over "The textbook says they may be used, citing one study")"""
+    a, b = cut[0], cut[1]
+    inside = [_k(w) for w, s, e in plain if a <= (s + e) / 2 <= b]
+    if any(k in SORRY for k in inside) or len(_content(inside)) < 3:
+        return False
+    later = [_k(w) for w, s, e in plain if (s + e) / 2 > b][:after]
+    return _restated(inside, later) < RESTATED
+
+
 def is_sorry(said):
     """True when a cut's words include "sorry" (a restart the lecturer flagged)."""
     return any(_k(w) in SORRY for w in said.split())

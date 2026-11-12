@@ -501,10 +501,17 @@ def process(src):
                     cut_audio(src, spans, again, sr=16000)
                     gaps = silences(again, script_check.MIN_GAP)
                     # two listens: a plain one and one primed for "sorry". Each catches some the other misses
-                    more = script_check.sorry_cuts(transcribe(again, notes, vad=False) or [], gaps)
+                    plain = transcribe(again, notes, vad=False) or []
+                    more = script_check.sorry_cuts(plain, gaps)
                     for c in script_check.sorry_cuts(transcribe(again, notes, vad=False, hunt=True) or [], gaps):
-                        if not any(c[0] < b and a < c[1] for a, b, _ in more):
-                            more.append(c)
+                        if any(c[0] < b and a < c[1] for a, b, _ in more):
+                            continue
+                        # primed for "sorry", Whisper can also imagine one over real teaching: keep the cut only
+                        # when the plain listen agrees it isn't lost
+                        if script_check.imagined_sorry(c, plain):
+                            print(f"      not cut at {c[0]:.0f} s: a \"sorry\" only the primed listen heard, over words said once")
+                            continue
+                        more.append(c)
                     more.sort()
                     more = [(to_source_time(a, spans), to_source_time(b, spans), said) for a, b, said in more]
                     more = keep_to_slide([c for c in more if c[1] > c[0]], slides)
