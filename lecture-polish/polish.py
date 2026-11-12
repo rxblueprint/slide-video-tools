@@ -517,6 +517,11 @@ def process(src):
                     more = keep_to_slide([c for c in more if c[1] > c[0]], slides)
                     print(f"      {len(more)} more found")
                     if not more:
+                        # this listen heard the finished audio: caption what it heard. The first listen can run
+                        # two takes together ("The American, sorry, the American Academy of"), and cutting the
+                        # first take from it would cut words from the captions that are still in the video
+                        if plain:
+                            words = [(w, to_source_time(a, spans), to_source_time(b, spans)) for w, a, b in plain]
                         break
                     cuts = sorted(cuts + more)
                     spans = remove_ranges(spans, more)
