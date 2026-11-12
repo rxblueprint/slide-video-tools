@@ -361,6 +361,30 @@ def _sentence_ends(heard, i, s, sil):
             if re.search(r"(?<!\.\.)[.?!]$", heard[p][0]) and _gap_after(heard, p, sil) >= SENTENCE_GAP]
 
 
+def _put_right(keys, s, r, lo):
+    """Where the take begins when the restart just puts a word right ("from 2020, sorry, 2016 says", "every
+    four, sorry, every six weeks", "twice daily, sorry, once daily"): the last one to three words before "sorry"
+    said again with one word changed. Only that much is cut, not the sentence. None when it isn't that."""
+    for n in (1, 2, 3):
+        if s - n < lo or r + n > len(keys):
+            break
+        take, redo = keys[s - n:s], keys[r:r + n]
+        if not all(take) or not all(redo):
+            break
+        diff = [k for k in range(n) if take[k] != redo[k]]
+        if len(diff) == 1 and (n > 1 or _swapped(take[0], redo[0])):
+            return s - n
+    return None
+
+
+def _swapped(before, after):
+    """True when the word after "sorry" stands in for the one just before it: a number for a number, or a drug
+    name for a drug name."""
+    num = lambda k: (k in _NUM_WORDS and k != "one") or k.isdigit()   # noqa: E731  ("one" is often a pronoun)
+    return bool(before and after and before != after
+                and ((num(before) and num(after)) or (drug_like(before) and drug_like(after))))
+
+
 def _sorry_takes(heard, keys, sil):
     """
     [(first word, restart word, cut)] for each "sorry": the restart is the first word after it (fillers
@@ -410,12 +434,33 @@ def _sorry_takes(heard, keys, sil):
             if _restated(first, keys[r:r + (s - k2) + 8]) >= (RESTATED - 0.1 if rule == 1 else RESTATED):
                 i = k2
                 break
+        if i is None:                                           # else a word or two put right
+            i = _put_right(keys, s, r, lo)
         if i is None:                                           # else the sentence "sorry" ends
             i = s                                               # (the word before "sorry" is part of it,
             if s - 1 > lo and not _sentence_ends(heard, s - 1, s + 1, sil):   # unless it ends a finished one)
                 i = s - 1
             while i > lo and not re.search(r"[.?!]$", heard[i - 1][0]) and _gap_after(heard, i - 1, sil) < 0.5:
                 i -= 1
+            # and back past a pause, over each earlier part of the sentence that is said again soon after
+            # ("all three work equally well, we choose by the form, sorry, ... all three work equally well")
+            j = i
+            while j > lo and not re.search(r"[.?!]$", heard[j - 1][0]):
+                j -= 1
+                while j > lo and not re.search(r"[.?!]$", heard[j - 1][0]) and _gap_after(heard, j - 1, sil) < 0.5:
+                    j -= 1
+                part = keys[j:i]
+                if any(k in SORRY for k in part):
+                    break
+                if len(_content(part)) < 2:
+                    if j > lo and not re.search(r"[.?!]$", heard[j - 1][0]):
+                        continue                                # too little to judge yet: take in the part before
+                    if all(k in keys[r:r + 40] for k in part if k):
+                        i = j                                   # the first word or two of the sentence, said again
+                    break
+                if _restated(part, keys[r:r + 40]) < 1.0:
+                    break
+                i = j
         # keep a finished sentence at the front of the take that the restart doesn't say again
         # ("...an extended-release capsule. Third row... sorry, in third row" keeps "capsule")
         for p in _sentence_ends(heard, i, s, sil):
