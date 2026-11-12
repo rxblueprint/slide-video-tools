@@ -503,12 +503,14 @@ def process(src):
                     # two listens: a plain one and one primed for "sorry". Each catches some the other misses
                     plain = transcribe(again, notes, vad=False) or []
                     more = script_check.sorry_cuts(plain, gaps)
-                    for c in script_check.sorry_cuts(transcribe(again, notes, vad=False, hunt=True) or [], gaps):
+                    primed = transcribe(again, notes, vad=False, hunt=True) or []
+                    for c in script_check.sorry_cuts(primed, gaps):
+                        c = script_check.start_on_plain(c, plain)
                         if any(c[0] < b and a < c[1] for a, b, _ in more):
                             continue
                         # primed for "sorry", Whisper can also imagine one over real teaching: keep the cut only
                         # when the plain listen agrees it isn't lost
-                        if script_check.imagined_sorry(c, plain):
+                        if script_check.imagined_sorry(c, plain, primed):
                             print(f"      not cut at {c[0]:.0f} s: a \"sorry\" only the primed listen heard, over words said once")
                             continue
                         more.append(c)
