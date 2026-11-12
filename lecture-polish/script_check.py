@@ -487,16 +487,38 @@ def sorry_cuts(words, sil):
     return [c for _, _, c in _sorry_takes(heard, [_k(w) for w, _, _ in heard], sil)]
 
 
-def imagined_sorry(cut, plain, after=40):
+def imagined_sorry(cut, plain, primed, after=40):
     """True when a "sorry" cut found only by the listen primed for "sorry" would remove teaching: the plain
-    listen hears no "sorry" there, but three or more meaningful words that aren't said again just after.
-    ("I'm, I'm sorry" imagined over "The textbook says they may be used, citing one study")"""
+    listen hears no "sorry" there, but three or more meaningful words that neither listen hears said again
+    just after. ("I'm, I'm sorry" imagined over "The textbook says they may be used, citing one study".)
+    The primed listen counts for the "said again": the plain one can run two takes into one ("guideline from
+    2020, sorry, the American Psychiatric Association guideline from 2016" heard as "guideline from 2016")."""
     a, b = cut[0], cut[1]
     inside = [_k(w) for w, s, e in plain if a <= (s + e) / 2 <= b]
     if any(k in SORRY for k in inside) or len(_content(inside)) < 3:
         return False
-    later = [_k(w) for w, s, e in plain if (s + e) / 2 > b][:after]
-    return _restated(inside, later) < RESTATED
+    later = [[_k(w) for w, s, e in heard if (s + e) / 2 > b][:after] for heard in (plain, primed)]
+    return _restated(inside, later[0] + later[1]) < RESTATED
+
+
+def start_on_plain(cut, plain):
+    """A "sorry" cut found only by the primed listen, started where the plain listen hears its first meaningful
+    word. The primed listen can drop the words before a take ("Then we set a clear time to review it.") and
+    start the cut at the pause before them; the plain one heard them, so the cut starts after them."""
+    a, b, said = cut
+    keys = [_k(w) for w in said.split()]
+    f = next((n for n, k in enumerate(keys) if k and _content([k])), None)
+    if f is None:
+        return cut
+    lead = [k for k in keys[:f] if k]                           # the little words before it ("The American")
+    heard = [(w.strip(), s, e) for w, s, e in plain if w.strip()]
+    for n, (w, s, e) in enumerate(heard):
+        if a - 0.5 <= s < b and _k(w) == keys[f]:
+            m = n - len(lead) if lead and [_k(x) for x, _, _ in heard[max(0, n - len(lead)):n]] == lead else n
+            if m > 0 and heard[m - 1][2] > a:                   # words before the take the primed listen missed
+                a = round((heard[m - 1][2] + heard[m][1]) / 2, 3)
+            return (a, b, said)
+    return cut
 
 
 def is_sorry(said):
