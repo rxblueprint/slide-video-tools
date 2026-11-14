@@ -327,6 +327,9 @@ def retakes(words, sil, left=None):
 SORRY = {"sorry", "oops"}
 SORRY_LOOKBACK = 80   # words back to look for where the abandoned take began
 RESTATED = 0.6        # share of a take's first sentence the restart must say again, when the take is long
+SAME_NAME = 0.8       # how alike two spellings of one drug name must be (real look-alikes like ceftriaxone /
+                      # cefotaxime are 0.67)
+CLAUSE_MAX = 8        # words: the most of a clause before "sorry" that is cut because the restart says it again
 SENTENCE_GAP = 0.35   # a full stop counts as the end of a finished sentence only with a pause this long after it
 _LITTLE = {"which", "that", "this", "these", "those", "they", "them", "then", "than", "there", "their", "with",
            "from", "have", "were", "what", "when", "will", "would", "also", "into", "just", "like", "your"}
@@ -345,7 +348,15 @@ def _restated(take, restart):
     said = restart
     # a drug name or a number has to be said again as it was: "Lecanemab is given every two weeks" isn't
     # restarted by "Donanemab is given every four weeks", however alike the rest is
-    if any((drug_like(k) or (k.isdigit() and k != "1")) and k not in said for k in take):
+    if any(k.isdigit() and k != "1" and k not in said for k in take):
+        return 0.0
+    # Whisper can hear the same drug two ways in one breath ("Amiodarone has a little..." / "Amute everyone has
+    # little..."), so a drug name that isn't heard again only rules the restart out when the restart names a
+    # different drug instead. A spelling almost the same counts as the same drug: two real drugs are never that
+    # close (lecanemab / donanemab 0.67, ceftriaxone / cefotaxime 0.67)
+    missing = [k for k in take if drug_like(k) and not any(_same_name(k, x) for x in said)]
+    other = [x for x in said if drug_like(x) and not any(_same_name(x, k) for k in take)]
+    if missing and other:
         return 0.0
     words = _content(take)
     if not words:
@@ -353,6 +364,35 @@ def _restated(take, restart):
     hit = sum(1 for k in words if k in said or any(difflib.SequenceMatcher(None, k, x).ratio() >= 0.75
                                                    for x in said if len(x) >= 4))
     return hit / len(words)
+
+
+def _same_name(a, b):
+    """True when b is drug name a, or Whisper's other spelling of it ("amuodarone" / "amuodarun")."""
+    return a == b or (len(b) >= 5 and difflib.SequenceMatcher(None, a, b, autojunk=False).ratio() >= SAME_NAME)
+
+
+def _said_again_soon(heard, keys, s, r, sil):
+    """Where the last clause before "sorry" begins, when the restart says it again straight away: "It is
+    self-limited, becomes chronic. Sorry. It never becomes chronic" cuts "becomes chronic" too, even though
+    Whisper put a full stop before "sorry". The clause runs back to the last comma, full stop or pause;
+    every meaningful word in it has to come back within its own length (plus a few) of the restart. None when
+    it isn't that (a finished sentence that the restart doesn't repeat stays)."""
+    def boundary(p):                                            # a clause ends at word p
+        return bool(re.search(r"[,;:.?!]$", heard[p][0])) or _gap_after(heard, p, sil) >= 0.5
+
+    c = s - 1                                                   # the word before "sorry" ends the clause
+    while c > 0 and not boundary(c - 1):
+        c -= 1
+        if s - c > CLAUSE_MAX:
+            return None                                         # too long to be a slip said again
+    clause = [k for k in keys[c:s] if k]
+    words = _content(clause)
+    soon = keys[r:r + len(clause) + 4]
+    if not words:
+        return None
+    if all(any(k == x or (len(k) >= 5 and _same_name(k, x)) for x in soon) for k in words):
+        return c
+    return None
 
 
 def _sentence_ends(heard, i, s, sil):
@@ -436,6 +476,14 @@ def _sorry_takes(heard, keys, sil):
                 break
         if i is None:                                           # else a word or two put right
             i = _put_right(keys, s, r, lo)
+        c = _said_again_soon(heard, keys, s, r, sil)
+        if c is not None and c >= lo:
+            if i is not None and i < c and _restated(keys[i:c], keys[r:r + (s - i) + 8]) < 1.0:
+                # the take found reaches back over words the restart never says ("It is self-limited, becomes
+                # chronic, sorry, it never becomes chronic"): cut only the clause that is said again
+                i = c
+            elif i is None and s - 1 > lo and _sentence_ends(heard, s - 1, s + 1, sil):
+                i = c                                           # a finished clause said again right after
         if i is None:                                           # else the sentence "sorry" ends
             i = s                                               # (the word before "sorry" is part of it,
             if s - 1 > lo and not _sentence_ends(heard, s - 1, s + 1, sil):   # unless it ends a finished one)
